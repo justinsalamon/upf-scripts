@@ -27,7 +27,8 @@ w = es.Windowing(type = 'hann', size = winSize)
 yin = es.PitchYinFFT(frameSize = winSize, minFrequency = 20, maxFrequency = 2000)
 spectrum = es.Spectrum()    #FUncion para calcular espectro por frame
 calcEnergy = es.Energy()
-predMel = es.PredominantMelody(numberHarmonics = 15, filterIterations = 3, frameSize = 2048, hopSize = 128, minFrequency = 20, maxFrequency = 2000, minDuration = 50)
+# predMel = es.PredominantMelody(numberHarmonics = 15, filterIterations = 3, frameSize = 2048, hopSize = 128, minFrequency = 20, maxFrequency = 2000, minDuration = 50)
+predMel = es.PredominantPitchMelodia(numberHarmonics = 15, filterIterations = 3, frameSize = 2048, hopSize = 128, minFrequency = 20, maxFrequency = 2000, minDuration = 50)
 onsetDet = es.OnsetDetection(method = 'flux')
 
 #Definir Funciones
