@@ -18,7 +18,7 @@ import argparse
 def audio_to_midi_melody(infile, outfile):
 
     #Load audio and define parameters
-    audio = es.MonoLoader(filename = 'melodies/melodies/melody7.wav')()
+    audio = es.MonoLoader(filename = infile)()
     winSize = 2048
     hopSize = 128
     Fs = 44100
@@ -73,7 +73,7 @@ def audio_to_midi_melody(infile, outfile):
 
     bpm, bpmAmpl = es.NoveltyCurveFixedBpmEstimator()(es.NoveltyCurve()(arrayCast(freqBands)))
 
-    saveMIDI('MIDIfile7.mid', noteOnsets, predMelody, bpm[0], Fs, hopSize)
+    saveMIDI(outfile, noteOnsets, predMelody, bpm[0], Fs, hopSize)
 
     #Graficar
     plt.subplot(3,1,1)
