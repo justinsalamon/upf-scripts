@@ -12,24 +12,82 @@ import numpy as np
 import matplotlib.pyplot as plt
 from essentia import array as arrayCast
 from midiutil.MidiFile import MIDIFile
+import argparse
 
-#Load audio and define parameters
-audio = es.MonoLoader(filename = 'melodies/melodies/melody7.wav')()
-winSize = 2048  
-hopSize = 128
-Fs = 44100
-pend = np.size(audio) - winSize #ultimo valor de ventana para calcular
-pin =0  #Apuntador
-totalTime = np.size(audio)/float(Fs)
 
-#Instanciar funciones de essentia
-w = es.Windowing(type = 'hann', size = winSize)
-yin = es.PitchYinFFT(frameSize = winSize, minFrequency = 20, maxFrequency = 2000)
-spectrum = es.Spectrum()    #FUncion para calcular espectro por frame
-calcEnergy = es.Energy()
-# predMel = es.PredominantMelody(numberHarmonics = 15, filterIterations = 3, frameSize = 2048, hopSize = 128, minFrequency = 20, maxFrequency = 2000, minDuration = 50)
-predMel = es.PredominantPitchMelodia(numberHarmonics = 15, filterIterations = 3, frameSize = 2048, hopSize = 128, minFrequency = 20, maxFrequency = 2000, minDuration = 50)
-onsetDet = es.OnsetDetection(method = 'flux')
+def audio_to_midi_melody(infile, outfile):
+
+    #Load audio and define parameters
+    audio = es.MonoLoader(filename = 'melodies/melodies/melody7.wav')()
+    winSize = 2048
+    hopSize = 128
+    Fs = 44100
+    pend = np.size(audio) - winSize #ultimo valor de ventana para calcular
+    pin =0  #Apuntador
+    totalTime = np.size(audio)/float(Fs)
+
+    #Instanciar funciones de essentia
+    w = es.Windowing(type = 'hann', size = winSize)
+    yin = es.PitchYinFFT(frameSize = winSize, minFrequency = 20, maxFrequency = 2000)
+    spectrum = es.Spectrum()    #FUncion para calcular espectro por frame
+    calcEnergy = es.Energy()
+    # predMel = es.PredominantMelody(numberHarmonics = 15, filterIterations = 3, frameSize = 2048, hopSize = 128, minFrequency = 20, maxFrequency = 2000, minDuration = 50)
+    predMel = es.PredominantPitchMelodia(numberHarmonics = 15, filterIterations = 3, frameSize = 2048, hopSize = 128, minFrequency = 20, maxFrequency = 2000, minDuration = 50)
+    onsetDet = es.OnsetDetection(method = 'flux')
+
+    #Inicializar vectores
+    vectSize = np.ceil(np.size(audio))/hopSize
+    peakDet = es.PeakDetection(threshold = 0.15, maxPosition = vectSize, range = vectSize, maxPeaks = 300)    #has to be normalized
+
+    melodyV = []
+    confV = []
+    energy = []
+    freqBands = []
+
+    for frame in es.FrameGenerator(audio, winSize, hopSize):
+        spec = spectrum(w(frame))   #Calcular el espectro
+        melody, conf = yin(spec)    #Calcular melodia con algoritmo yin
+        melody = 0 if conf < 0.5 else melody #0 para valores con poca confidence
+        melodyV.append(melody)
+        ener = calcEnergy(frame)   #Calcular energia por frame
+        energy.append(ener)
+        freqBands.append(es.FrequencyBands()(spec))
+        #onsets[i] = onsetDet(spec, spec)
+
+    #Convertir valores a float32 compatible con Essentia
+    melodyV = arrayCast(melodyV)
+    confV = arrayCast(confV)
+    energy = arrayCast(energy)
+
+    predMelody, confid = predMel(audio) #Calcular melodia con otro algoritmo
+
+    melodyV = freq2cent(melodyV)
+    predMelody = freq2cent(predMelody)
+
+    energy = np.log10(energy+.0000001)
+    energy = energy/float(max(energy)) #Normalize Energy
+    smoothEnergy = medfilt(arrayCast(energy), .7)   #Usando filtro para alisar curva, valor en ms
+    onsets, amplitudes = peakDet(smoothEnergy)  #detectar picos
+
+    noteOnsets = arrayCast(segmentByFreq(melodyV.copy(), totalTime))
+
+    bpm, bpmAmpl = es.NoveltyCurveFixedBpmEstimator()(es.NoveltyCurve()(arrayCast(freqBands)))
+
+    saveMIDI('MIDIfile7.mid', noteOnsets, predMelody, bpm[0], Fs, hopSize)
+
+    #Graficar
+    plt.subplot(3,1,1)
+    plt.plot(np.linspace(0, totalTime, np.size(melodyV)), melodyV, 'b')
+    plt.plot(np.linspace(0, totalTime, np.size(predMelody)), predMelody, 'r')
+    plt.vlines(noteOnsets*hopSize/Fs, min(melodyV), max(melodyV))
+
+    plt.subplot(3,1,2)
+    plt.plot(np.linspace(0, totalTime, np.size(energy)),energy)
+    plt.vlines(onsets*hopSize/Fs, min(energy), max(energy))
+
+    plt.subplot(3,1,3)
+    plt.plot(np.linspace(0, totalTime, np.size(quantizeNote(cambioNota(melodyV)))),quantizeNote(cambioNota(melodyV)))
+    plt.show()
 
 #Definir Funciones
 def freq2cent (freq):
@@ -63,7 +121,7 @@ def medfilt (x, kms):
         y[-j:,-(i+1)] = x[-1]
     return np.median (y, axis=1)
 
-def meanNote(cents, timeRes = .3):
+def meanNote(cents, totalTime, timeRes = .3):
 #Promediar notas en la resolucion de tiempo indicada
     res = np.size(cents)/totalTime #cuantas muestras por ms hay
     deltaT = int(np.round(timeRes*res))   #Cuantas muestras hay que promediar
@@ -80,7 +138,7 @@ def quantizeNote(centsV):
     return cents
 #Quantizar un vector de cents a notas
     
-def segmentByFreq(notes, minSeparation = 100):
+def segmentByFreq(notes, totalTime, minSeparation = 100):
 #Devuelve el indice donde hay cambio de nota ignorando separaciones muy juntas
 #MinSeparation dado en ms
     cambios = cambioNota(quantizeNote(notes))   #Vector con cambios de nota quantizados
@@ -95,7 +153,7 @@ def segmentByFreq(notes, minSeparation = 100):
                 lastChange = i
     return noteChange
     
-def saveMIDI(filename, noteOnsets, melody, tempo):
+def saveMIDI(filename, noteOnsets, melody, tempo, Fs, hopSize):
     barOnsets = (noteOnsets*hopSize/float(Fs))*(tempo/60)    #Onsets dado en barra
     notes = quantizeNote(melody)    
     track = 0
@@ -124,57 +182,14 @@ def saveMIDI(filename, noteOnsets, melody, tempo):
     binfile = open(filename, 'wb')
     MIDI.writeFile(binfile)
     binfile.close()    
-    
-#Inicializar vectores
-vectSize = np.ceil(np.size(audio))/hopSize  
-peakDet = es.PeakDetection(threshold = 0.15, maxPosition = vectSize, range = vectSize, maxPeaks = 300)    #has to be normalized
 
-melodyV = []
-confV = []
-energy = []
-freqBands = []
 
-for frame in es.FrameGenerator(audio, winSize, hopSize):
-    spec = spectrum(w(frame))   #Calcular el espectro  
-    melody, conf = yin(spec)    #Calcular melodia con algoritmo yin
-    melody = 0 if conf < 0.5 else melody #0 para valores con poca confidence
-    melodyV.append(melody)    
-    ener = calcEnergy(frame)   #Calcular energia por frame
-    energy.append(ener)    
-    freqBands.append(es.FrequencyBands()(spec))
-    #onsets[i] = onsetDet(spec, spec)    
+if __name__ == "__main__":
 
-#Convertir valores a float32 compatible con Essentia
-melodyV = arrayCast(melodyV)
-confV = arrayCast(confV)
-energy = arrayCast(energy)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("infile")
+    parser.add_argument("outfile")
 
-predMelody, confid = predMel(audio) #Calcular melodia con otro algoritmo
+    args = parser.parse_args()
 
-melodyV = freq2cent(melodyV)
-predMelody = freq2cent(predMelody)
-
-energy = np.log10(energy+.0000001)
-energy = energy/float(max(energy)) #Normalize Energy
-smoothEnergy = medfilt(arrayCast(energy), .7)   #Usando filtro para alisar curva, valor en ms
-onsets, amplitudes = peakDet(smoothEnergy)  #detectar picos
-
-noteOnsets = arrayCast(segmentByFreq(melodyV.copy()))
-
-bpm, bpmAmpl = es.NoveltyCurveFixedBpmEstimator()(es.NoveltyCurve()(arrayCast(freqBands)))
-
-saveMIDI('MIDIfile7.mid', noteOnsets, predMelody, bpm[0])
-
-#Graficar
-plt.subplot(3,1,1)  
-plt.plot(np.linspace(0, totalTime, np.size(melodyV)), melodyV, 'b')
-plt.plot(np.linspace(0, totalTime, np.size(predMelody)), predMelody, 'r')
-plt.vlines(noteOnsets*hopSize/Fs, min(melodyV), max(melodyV))
-
-plt.subplot(3,1,2)
-plt.plot(np.linspace(0, totalTime, np.size(energy)),energy)
-plt.vlines(onsets*hopSize/Fs, min(energy), max(energy))
-
-plt.subplot(3,1,3)
-plt.plot(np.linspace(0, totalTime, np.size(quantizeNote(cambioNota(melodyV)))),quantizeNote(cambioNota(melodyV)))
-plt.show()
+    audio_to_midi_melody(args.infile, args.outfile)
